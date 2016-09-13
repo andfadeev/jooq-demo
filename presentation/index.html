@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+
+        <title>jOOQ</title>
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui">
+
+        <link rel="stylesheet" href="css/reveal.css">
+        <link rel="stylesheet" href="css/theme/simple.css" id="theme">
+        <link rel="stylesheet" href="lib/css/zenburn.css">
+
+        <!--[if lt IE 9]>
+            <script src="lib/js/html5shiv.js"></script>
+        <![endif]-->
+    </head>
+
+    <body>
+        <div class="reveal">
+            <div class="slides">
+
+                <section>
+                    <h1>jOOQ</h1>
+                    <p>The easiest way to write SQL in Java </p>
+                    <img width="256" height="256" src="jooq-logo.png" style="border: none; box-shadow: none;"/>
+                    <p>jOOQ: Java Object Oriented Querying</p>
+                    <div><a href="http://www.jooq.org">www.jooq.org</a></div>
+                </section>
+
+                <section>
+                    <h1>ORM vs SQL</h1>
+                    <ol>
+                        <li>
+                            Основая модель: db schema vs app model?
+                            <ul>
+                                <li>Переживет ли наша база наше приложение?</li>
+                                <li>Много разных приложений ходят в одну базу?</li>
+                            </ul>
+                        </li>
+                        <li>
+                            Complex reading & simple writing vs complex writing?
+                            <ul>
+                                <li>
+                                    Reading is complex: many joins, aggregations, reporting?
+                                </li>
+                                <li>
+                                    Много CRUD?
+                                </li>
+                                <li>
+                                    Load & persist complex object graph?
+                                </li>
+                            </ul>
+                        </li>
+                        <!--<li class="fragment">Реальность: нужно использовать подход в зависимости от задачи!</li>-->
+                    </ol>
+                </section>
+
+                <section>
+                    <h1>Hibernate?</h1>
+                    <blockquote>
+                        <p>Just because you're using Hibernate, doesn't mean you have to use it for everything. A point I've been making for about ten years now.</p>
+                        <p>Gavin King, 10.12.2013</p>
+                    </blockquote>
+                </section>
+
+                <section>
+                    <h1>SQL?</h1>
+                </section>
+
+                <section>
+                    <h1>А почему не JDBC?</h1>
+                    <pre style="box-shadow: none;">
+                        <code class="java hljs">
+1  PreparedStatement stmt = connection.prepareStatement(
+2    "SELECT p.text txt" +
+3        (isAccount ? ", NVL(a.type, ?) " : "") +
+4        "FROM products p " +
+5        (isAccount ? " INNER JOIN accounts a USING (prod_id) " : "") +
+6        " WHERE p.cust_id = ? AND p.value < ?" +
+7        (isAccount ? " AND a.type LIKE '%" + type + "%'" : ""));
+8  stmt.setInt(1, defaultType);
+9  stmt.setInt(2, custID);
+10  stmt.setBigDecimal(3, BigDecimal.ZERO);
+11  ResultSet rs = stmt.executeQuery();
+12  rs.close();
+13  stmt.close();
+                        </code>
+                    </pre>
+                    <div class="fragment">
+                        <ul>
+                            <li>
+                                Error prone: слишком много потециальных runtime багов
+                            </li>
+                            <li>
+                                Line 4: Syntax errors resulting from bad concatenation on line 3
+                            </li>
+                            <li>
+                                Line 7: Syntax errors and SQL injection risk due to variable inlining
+                            </li>
+                            <li>
+                                Line 8: Wrong bind index resulting from a potential mismatch on line 3
+                            </li>
+                            <li>
+                                Line 12: Bad resource management
+                            </li>
+                            <li>Работать с ResultSet-ом неудобно</li>
+                        </ul>
+                    </div>
+                </section>
+
+                <section>
+                    <h1>Running totals</h1>
+
+                    <div class="left">
+                    <pre style="box-shadow: none;">
+                        <code class="sql hljs">
+| ID   | VALUE_DATE | AMOUNT |
+|------|------------|--------|
+| 9997 | 2014-03-18 |  99.17 |
+| 9981 | 2014-03-16 |  71.44 |
+| 9979 | 2014-03-16 | -94.60 |
+| 9977 | 2014-03-16 |  -6.96 |
+| 9971 | 2014-03-15 | -65.95 |
+                        </code>
+                    </pre>
+                    </div>
+
+                    <div class="right">
+                    <pre style="box-shadow: none;">
+                        <code class="sql hljs">
+| ID   | VALUE_DATE | AMOUNT |  BALANCE |
+|------|------------|--------|----------|
+| 9997 | 2014-03-18 |  99.17 | 19985.81 |
+| 9981 | 2014-03-16 | +71.44 |=19886.64 |
+| 9979 | 2014-03-16 | -94.60 |+19815.20 |
+| 9977 | 2014-03-16 |  -6.96 | 19909.80 |
+| 9971 | 2014-03-15 | -65.95 | 19916.76 |
+                        </code>
+                    </pre>
+                    </div>
+                </section>
+
+                <section>
+                    <h1>Варианты?</h1>
+
+                    <ul>
+                        <li>Сделать на java</li>
+                        <li>Попробовать сделать на SQL?</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h1>Попытка №1</h1>
+
+                    <pre style="box-shadow: none;">
+                        <code class="sql hljs">
+select b1.bill_id, b1.creation_time, b1.price,
+(select coalesce(sum(b2.price), 0)
+    from bill b2
+    where b1.account_id = b2.account_id
+          and (b2.creation_time, b2.bill_id) < (b1.creation_time, b1.bill_id)
+) as balance
+from bill b1
+where b1.account_id = 1100939
+order by b1.creation_time desc, b1.bill_id desc;
+                        </code>
+                    </pre>
+                </section>
+
+                <section>
+                    <h1>Fail :(</h1>
+
+                    <p>Получили O(n^2) алгоритм, кол-во строк: ~10k, время: 42 сек</p>
+
+                    <pre style="box-shadow: none;">
+                        <code class="sql hljs">
+Sort  (cost=109993.30..109998.87 rows=11148 width=24) (actual time=42490.635..42491.401 rows=9824 loops=1)
+Sort Key: b1.creation_time, b1.bill_id
+Sort Method: quicksort  Memory: 1152kB
+Buffers: shared hit=14943797 read=28
+I/O Timings: read=14.740
+->  Index Scan using bill_account_currency_index on bill b1  (cost=0.09..109843.42 rows=11148 width=24) (actual time=22.441..42482.146 rows=9824 loops=1)
+Index Cond: (account_id = 1100939)
+Buffers: shared hit=14943797 read=28
+I/O Timings: read=14.740
+SubPlan 1
+->  Aggregate  (cost=9.65..9.70 rows=1 width=8) (actual time=4.321..4.321 rows=1 loops=9824)
+Buffers: shared hit=14942277 read=27
+I/O Timings: read=9.681
+->  Index Scan using bill_account_currency_index on bill b2  (cost=0.09..9.64 rows=12 width=8) (actual time=0.013..3.092 rows=4912 loops=9824)
+Index Cond: (b1.account_id = account_id)
+Filter: (ROW(creation_time, bill_id) < ROW(b1.creation_time, b1.bill_id))
+Rows Removed by Filter: 4912
+Buffers: shared hit=14942277 read=27
+I/O Timings: read=9.681
+Planning time: 0.184 ms
+Execution time: 42491.949 ms
+                        </code>
+                    </pre>
+                </section>
+
+                <!--<section>-->
+                    <!--<h2>Попытка #2</h2>-->
+
+                    <!--<ul>-->
+                        <!--<li>Рекурсивный sql запрос</li>-->
+                        <!--<li>Слишком много сложного кода</li>-->
+
+                        <!--<li>Результат несильно лучше</li>-->
+                        <!--<li>Опять fail :(</li>-->
+                    <!--</ul>-->
+                <!--</section>-->
+
+                <section>
+                    <h2>Попытка #2</h2>
+
+                    <ul>
+                        <li>Window functions</li>
+                        <li>sql:2003 standard</li>
+                        <li class="fragment">PostgreSQL: over, partition by, window and more!</li>
+                    </ul>
+
+                    <pre style="box-shadow: none;" class="fragment">
+                        <code class="sql hljs">
+select b.bill_id, b.creation_time, b.price,
+coalesce(sum(b.price) over (
+partition by b.account_id
+order by b.creation_time desc, b.bill_id desc
+rows between 1 following
+and unbounded following), 0) as balance
+from bill b
+where b.account_id = 1100939
+order by b.creation_time desc, b.bill_id desc;
+                        </code>
+                    </pre>
+                </section>
+
+                <section>
+                    <h1>Nice :)</h1>
+
+                    <p>Кол-во строк: ~10k, время: 24 ms</p>
+
+                    <pre style="box-shadow: none;">
+                        <code class="sql hljs">
+WindowAgg  (cost=1904.49..2484.19 rows=11148 width=24) (actual time=16.522..23.609 rows=9824 loops=1)
+Buffers: shared hit=1521
+->  Sort  (cost=1904.49..1910.07 rows=11148 width=24) (actual time=11.855..12.477 rows=9824 loops=1)
+Sort Key: creation_time, bill_id
+Sort Method: quicksort  Memory: 1152kB
+Buffers: shared hit=1521
+->  Index Scan using bill_account_currency_index on bill b  (cost=0.09..1754.61 rows=11148 width=24) (actual time=0.023..7.484 rows=9824 loops=1)
+Index Cond: (account_id = 1100939)
+Buffers: shared hit=1521
+Planning time: 0.130 ms
+Execution time: 24.467 ms
+                        </code>
+                    </pre>
+                </section>
+
+                <section>
+                    <h1>jOOQ's DSL</h1>
+                    <div class="left">
+                        <pre style="box-shadow: none;">
+                            <code class="sql hljs">
+SELECT *
+  FROM author a
+  JOIN book b ON a.id = b.author_id
+ WHERE a.year_of_birth > 1920
+   AND a.first_name = 'Paulo'
+ ORDER BY b.title;
+                            </code>
+                        </pre>
+                    </div>
+                    <div class="right">
+                        <pre style="box-shadow: none;">
+                            <code class="java hljs">
+create.select()
+.from(AUTHOR.as("a"))
+.join(BOOK.as("b")).on(a.ID.equal(b.AUTHOR_ID))
+.where(a.YEAR_OF_BIRTH.greaterThan(1920)
+.and(a.FIRST_NAME.equal("Paulo")))
+.orderBy(b.TITLE);
+                            </code>
+                        </pre>
+                    </div>
+                </section>
+
+                <section>
+                    <h1>Немного сложнее</h1>
+                    <div class="left">
+                        <pre style="box-shadow: none;">
+                            <code class="sql hljs">
+SELECT AUTHOR.FIRST_NAME, AUTHOR.LAST_NAME, COUNT(*)
+    FROM AUTHOR
+    JOIN BOOK ON AUTHOR.ID = BOOK.AUTHOR_ID
+   WHERE BOOK.LANGUAGE = 'DE'
+     AND BOOK.PUBLISHED > DATE '2008-01-01'
+GROUP BY AUTHOR.FIRST_NAME, AUTHOR.LAST_NAME
+  HAVING COUNT(*) > 5
+ORDER BY AUTHOR.LAST_NAME ASC NULLS FIRST
+   LIMIT 2
+  OFFSET 1;
+                            </code>
+                        </pre>
+                    </div>
+                    <div class="right">
+                        <pre style="box-shadow: none;">
+                            <code class="java hljs">
+create.select(AUTHOR.FIRST_NAME, AUTHOR.LAST_NAME, count())
+      .from(AUTHOR)
+      .join(BOOK).on(AUTHOR.ID.equal(BOOK.AUTHOR_ID))
+      .where(BOOK.LANGUAGE.eq("DE"))
+      .and(BOOK.PUBLISHED.gt(date("2008-01-01")))
+      .groupBy(AUTHOR.FIRST_NAME, AUTHOR.LAST_NAME)
+      .having(count().gt(5))
+      .orderBy(AUTHOR.LAST_NAME.asc().nullsFirst())
+      .limit(2)
+      .offset(1);
+                            </code>
+                        </pre>
+                    </div>
+                </section>
+
+                <section>
+                    <h1>jOOQ: running totals</h1>
+                    <div class="left">
+                        <pre style="box-shadow: none;">
+                            <code class="sql hljs">
+select b.bill_id, b.creation_time, b.price,
+coalesce(sum(b.price) over (
+partition by b.account_id
+order by b.creation_time desc, b.bill_id desc
+rows between 1 following
+and unbounded following), 0) as balance
+from bill b
+where b.account_id = 1100939
+order by b.creation_time desc, b.bill_id desc;
+                            </code>
+                        </pre>
+                    </div>
+                    <div class="right">
+                        <pre style="box-shadow: none;">
+                            <code class="java hljs">
+select(b.BILL_ID, b.ACCOUNT_ID, b.CREATION_TIME, b.PRICE,
+  coalesce(sum(b.PRICE)
+    .over(partitionBy(b.ACCOUNT_ID)
+    .orderBy(b.CREATION_TIME.desc(), b.BILL_ID.desc())
+    .rowsBetweenFollowing(1)
+    .andUnboundedFollowing()), 0).as(balance))
+.from(b)
+.where(b.ACCOUNT_ID.eq(1100939))
+.orderBy(b.CREATION_TIME.desc(), b.BILL_ID.desc())
+                            </code>
+                        </pre>
+                    </div>
+                </section>
+
+            </div>
+        </div>
+
+        <script src="lib/js/head.min.js"></script>
+        <script src="js/reveal.js"></script>
+
+        <script>
+
+         // Full list of configuration options available at:
+         // https://github.com/hakimel/reveal.js#configuration
+         Reveal.initialize({
+             controls: true,
+             progress: true,
+             history: true,
+             center: true,
+
+             transition: 'none', // none/fade/slide/convex/concave/zoom
+
+             // Optional reveal.js plugins
+             dependencies: [
+                 {
+                     src: 'lib/js/classList.js', condition: function () {
+                         return !document.body.classList;
+                     }
+                 },
+                 {
+                     src: 'plugin/markdown/marked.js', condition: function () {
+                         return !!document.querySelector('[data-markdown]');
+                     }
+                 },
+                 {
+                     src: 'plugin/markdown/markdown.js', condition: function () {
+                         return !!document.querySelector('[data-markdown]');
+                     }
+                 },
+                 {
+                     src: 'plugin/highlight/highlight.js', async: true, callback: function () {
+                         hljs.initHighlightingOnLoad();
+                     }
+                 },
+                 {src: 'plugin/zoom-js/zoom.js', async: true},
+                 {src: 'plugin/notes/notes.js', async: true}
+             ]
+         });
+
+        </script>
+    </body>
+</html>
